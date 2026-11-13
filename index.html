@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clipping</title>
+<style>
+:root{color-scheme:dark;font-family:Geist,Inter,system-ui,sans-serif;background:#101114;color:#f2f2f4;accent-color:#b9fb75}
+*{box-sizing:border-box}body{max-width:1110px;margin:auto;padding:36px 24px}
+header{border-bottom:1px solid #303137;margin-bottom:30px;padding-bottom:20px}h1{font-size:32px;margin:0;letter-spacing:-.06em}h1 span{color:#b9fb75}h2{font-size:18px;margin:0 0 16px}
+main{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+section{padding:20px;border:1px solid #303137;border-radius:14px;background:#1a1b20}
+video{width:100%;height:320px;background:#0c0d0f;border-radius:10px;margin-top:16px}
+input,select,button,a{font:inherit}button,select,input[type=number]{background:#24262d;color:inherit;border:1px solid #41434c;border-radius:8px;padding:8px}
+button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button.primary{background:#b9fb75;color:#17210d;border-color:#b9fb75;font-weight:700;padding:10px 15px}
+label{display:inline-flex;flex-direction:column;gap:6px;font-size:13px;color:#c5c6cc}input[type=number]{width:90px}p,output{color:#c5c6cc;font-size:14px}
+.tools,.settings,.row{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.settings{margin:18px 0}.row{padding:10px 0;border-bottom:1px solid #303137}.row span{font-variant-numeric:tabular-nums;align-self:center;min-width:24px;color:#b9fb75}.row input{width:84px}
+#downloads a{display:inline-block;margin:8px 14px 0 0;color:#b9fb75}
+@media(max-width:760px){main{grid-template-columns:1fr}video{height:240px}}
+</style>
+<header><h1><span>▰</span> Clipping</h1></header>
+<main>
+<section><h2>Source video</h2><input id="source" type="file" accept="video/*,.mkv,.mov" aria-label="Source video"><video id="preview" controls playsinline></video><p id="sourceStatus" role="status">Choose a video from your device.</p></section>
+<section>
+<h2>Clip ranges</h2>
+<div class="tools">
+<label>Clips<input id="count" type="number" min="1" max="20" value="5"></label>
+<label>Length (sec)<input id="length" type="number" min="1" max="180" value="15"></label>
+<button id="suggest" disabled>Spread across video</button>
+<button id="add" disabled>Add range</button>
+</div>
+<div id="ranges"></div>
+<div class="settings">
+<label>Resolution<select id="resolution"><option value="1080">1080 × 1920</option><option value="4k">2160 × 3840</option></select></label>
+<label>Framing<select id="framing"><option value="crop">Center crop</option><option value="fit">Fit with padding</option></select></label>
+<button class="primary" id="export" disabled>Export clips</button>
+</div>
+<output id="status" role="status"></output><div id="downloads"></div>
+</section>
+</main>
+<script>
+const get = id => document.getElementById(id);
+const video = get('preview');
+let source = null, objectURL = null, previewEnd = null, exporting = false;
+function controls() {
+  get('suggest').disabled = !source;
+  get('add').disabled = !source || get('ranges').children.length >= 20;
+  get('export').disabled = !source || exporting || !get('ranges').children.length;
+}
+async function request(url, options) {
+  const response = await fetch(url, options);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'The request failed.');
+  return data;
+}
+get('source').onchange = async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  source = null;
+  previewEnd = null;
+  get('ranges').replaceChildren();
+  controls();
+  if (objectURL) URL.revokeObjectURL(objectURL);
+  video.src = objectURL = URL.createObjectURL(file);
+  const input = event.target;
+  input.disabled = true;
+  get('sourceStatus').textContent = 'Reading the video locally…';
+  try {
+    source = await request('/api/source', {method:'POST', body:file});
+    get('sourceStatus').textContent = 'Duration: ' + source.duration.toFixed(2) + ' seconds';
+    suggest();
+  } catch (error) {
+    get('sourceStatus').textContent = error.message;
+  } finally {
+    input.disabled = false;
+    controls();
+  }
+};
+function addRange(start, end) {
+  const holder = get('ranges');
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = '<span></span><label>Start (sec)<input type="number" min="0" step=".01"></label><label>End (sec)<input type="number" min="0" step=".01"></label><button>Preview</button><button>Remove</button>';
+  const [a,b] = row.querySelectorAll('input');
+  const [play,remove] = row.querySelectorAll('button');
+  a.value = start.toFixed(2); b.value = end.toFixed(2);
+  a.max = b.max = source.duration;
+  play.onclick = async () => {
+    if (!(a.value && b.value && +a.value < +b.value && +b.value <= source.duration)) {
+      get('status').textContent = 'Enter a valid start and end to preview.';
+      return;
+    }
+    try {
+      previewEnd = +b.value;
+      video.currentTime = +a.value;
+      await video.play();
+    } catch {
+      get('status').textContent = 'This source cannot play in the browser. You can still export it.';
+    }
+  };
+  remove.onclick = () => { row.remove(); renumber(); };
+  holder.append(row);
+}
+function renumber() {
+  [...get('ranges').children].forEach((row,i) => row.querySelector('span').textContent = String(i+1).padStart(2,'0'));
+  controls();
+}
+function suggest() {
+  const count = get('count'), length = get('length');
+  if (!count.reportValidity() || !length.reportValidity()) return;
+  const n = Number(count.value) || 5;
+  const duration = source.duration;
+  const span = Math.min(Number(length.value) || 15, duration);
+  const clips = Math.min(n, Math.floor(duration / span) || 1);
+  get('ranges').replaceChildren();
+  for (let i=0;i<clips;i++) {
+    const start = clips === 1 ? 0 : (duration-span) * i/(clips-1);
+    addRange(start, Math.min(start+span,duration));
+  }
+  renumber();
+}
+get('suggest').onclick = suggest;
+get('add').onclick = () => {
+  const start = Math.min(video.currentTime, Math.max(0,source.duration-.1));
+  addRange(start,Math.min(start+15,source.duration));
+  renumber();
+};
+video.addEventListener('timeupdate', () => {
+  if (previewEnd !== null && video.currentTime >= previewEnd) {
+    video.pause();
+    previewEnd = null;
+  }
+});
+get('export').onclick = async () => {
+  const status = get('status'), downloads = get('downloads');
+  const clips = [...get('ranges').children].map(row => [...row.querySelectorAll('input')].map(el => el.valueAsNumber));
+  if (clips.some(([a,b]) => !Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b > source.duration || b-a < .099)) {
+    status.textContent = 'Every range needs valid times at least 0.1 seconds apart.';
+    return;
+  }
+  exporting = true; controls(); downloads.replaceChildren();
+  status.textContent = 'Queueing export…';
+  try {
+    const {id} = await request('/api/export', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source:source.id, clips, resolution:get('resolution').value, framing:get('framing').value})
+    });
+    while (true) {
+      const job = await request('/api/jobs/' + id);
+      for (const file of job.files.slice(downloads.children.length)) {
+        const link = document.createElement('a');
+        link.href = file.url; link.textContent = 'Download ' + file.name;
+        downloads.append(link);
+      }
+      if (job.status === 'error') throw new Error(job.error);
+      if (job.status === 'done') { status.textContent = job.total + ' clips ready.'; break; }
+      status.textContent = job.current ? 'Exporting clip ' + job.current + ' of ' + job.total + '…' : 'Waiting to export…';
+      await new Promise(resolve => setTimeout(resolve, 800));
+    }
+  } catch (error) { status.textContent = error.message; }
+  finally { exporting = false; controls(); }
+};
+</script>
+</html>
