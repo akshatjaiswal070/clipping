@@ -5,13 +5,19 @@
 <title>Clipping</title>
 <style>
 :root{color-scheme:dark;font:16px system-ui;background:#101114;color:#f2f2f4;accent-color:#b9fb75}
-body{max-width:720px;margin:44px auto;padding:0 20px}section{background:#1a1b20;border:1px solid #303137;border-radius:14px;padding:20px}h1{letter-spacing:-.06em;font-size:38px}a{color:#b9fb75}video{width:100%;max-height:380px;background:#09090a;margin:16px 0}label{display:inline-flex;flex-direction:column;gap:5px;margin:0 10px 12px 0}input,button{font:inherit}input[type=number]{width:110px;padding:6px}button{padding:9px 14px;border:0;border-radius:7px;background:#b9fb75;color:#17210d;font-weight:700}button:disabled{opacity:.45}p{line-height:1.5}
+body{max-width:720px;margin:44px auto;padding:0 20px}section{background:#1a1b20;border:1px solid #303137;border-radius:14px;padding:20px}h1{letter-spacing:-.06em;font-size:38px}a{color:#b9fb75}video{width:100%;max-height:380px;background:#09090a;margin:16px 0}label{display:inline-flex;flex-direction:column;gap:5px;margin:0 10px 12px 0}input,button,select{font:inherit}select{padding:6px}input[type=number]{width:110px;padding:6px}button{padding:9px 14px;border:0;border-radius:7px;background:#b9fb75;color:#17210d;font-weight:700}button:disabled{opacity:.45}p{line-height:1.5}
 </style>
 <h1>Clipping</h1>
 <section>
   <label>Source video<input id="source" type="file" accept="video/*"></label>
   <video id="preview" controls playsinline></video>
   <form id="clip">
+    <label>Edit type<select id="editType" aria-describedby="editDescription">
+      <option value="cold">Cold Edit</option>
+      <option value="shorts" selected>YT Shorts Edit</option>
+      <option value="insta">Insta Edit</option>
+    </select></label>
+    <p id="editDescription"></p>
     <label>Start (seconds)<input id="start" type="number" min="0" step="any" value="0" required></label>
     <label>End (seconds)<input id="end" type="number" min="0" step="any" required></label>
     <button id="export" disabled>Export vertical clip</button>
@@ -29,6 +35,17 @@ const end = element('end');
 const exportButton = element('export');
 const status = element('status');
 const download = element('download');
+const editType = element('editType');
+const presets = {
+  cold: {description: 'Dark, high-contrast center crop.', filename: 'cold-edit'},
+  shorts: {description: 'Full-screen vertical center crop.', filename: 'yt-shorts-edit'},
+  insta: {description: 'Full source frame with a dimmed background.', filename: 'insta-edit'}
+};
+function describePreset() {
+  element('editDescription').textContent = presets[editType.value].description;
+}
+editType.onchange = describePreset;
+describePreset();
 let sourceUrl, outputUrl, audioContext, audioSource;
 const supported = typeof MediaRecorder !== 'undefined' &&
   typeof HTMLCanvasElement.prototype.captureStream === 'function' &&
@@ -64,7 +81,8 @@ element('clip').onsubmit = async event => {
     status.textContent = 'Choose a start and end within the video.';
     return;
   }
-  source.disabled = exportButton.disabled = true;
+  const preset = editType.value;
+  source.disabled = editType.disabled = exportButton.disabled = true;
   video.controls = false;
   download.hidden = true;
   status.textContent = 'Exporting in real time…';
@@ -97,9 +115,33 @@ element('clip').onsubmit = async event => {
         video.currentTime = from;
       });
     }
-    const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
-    const width = video.videoWidth * ratio, height = video.videoHeight * ratio;
-    const draw = () => frame.drawImage(video, (canvas.width-width)/2, (canvas.height-height)/2, width, height);
+    const horizontalScale = canvas.width / video.videoWidth;
+    const verticalScale = canvas.height / video.videoHeight;
+    const coverScale = Math.max(horizontalScale, verticalScale);
+    const fitScale = Math.min(horizontalScale, verticalScale);
+    function drawVideo(scale) {
+      const width = video.videoWidth * scale;
+      const height = video.videoHeight * scale;
+      frame.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+    }
+    function tint(color) {
+      frame.fillStyle = color;
+      frame.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    function draw() {
+      if (preset === 'cold') {
+        frame.filter = 'contrast(1.24) saturate(0.6) brightness(0.86)';
+        drawVideo(coverScale);
+        frame.filter = 'none';
+        tint('rgba(18, 40, 71, 0.18)');
+      } else if (preset === 'insta') {
+        drawVideo(coverScale);
+        tint('rgba(0, 0, 0, 0.68)');
+        drawVideo(fitScale);
+      } else {
+        drawVideo(coverScale);
+      }
+    }
     draw();
     const formats = ['video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'];
     const mimeType = formats.find(type => MediaRecorder.isTypeSupported(type));
@@ -127,7 +169,7 @@ element('clip').onsubmit = async event => {
     const type = recorder.mimeType || chunks[0].type;
     outputUrl = URL.createObjectURL(new Blob(chunks, {type}));
     download.href = outputUrl;
-    download.download = 'clip.' + (type.startsWith('video/mp4') ? 'mp4' : 'webm');
+    download.download = presets[preset].filename + '.' + (type.startsWith('video/mp4') ? 'mp4' : 'webm');
     download.hidden = false;
     status.textContent = 'Your clip is ready.';
   } catch (error) {
@@ -139,7 +181,7 @@ element('clip').onsubmit = async event => {
     if (audioOutput) audioSource.disconnect(audioOutput);
     for (const track of stream.getTracks()) track.stop();
     video.controls = true;
-    source.disabled = exportButton.disabled = false;
+    source.disabled = editType.disabled = exportButton.disabled = false;
   }
 };
 </script>

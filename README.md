@@ -40,4 +40,4 @@ Use current tokens with permission to publish to the intended accounts. Restart 
 
 ## Browser edition
 
-Use [Clipping on GitHub Pages](https://akshatjaiswal070.github.io/clipping/) to trim a local video and export a 720 × 1280 center crop in a supported browser. The browser records the clip in real time and downloads MP4 or WebM based on its recording support. The video stays on your device.
+Use [Clipping on GitHub Pages](https://akshatjaiswal070.github.io/clipping/) to trim a local video and export a 720 × 1280 clip in a supported browser. Choose Cold Edit for a dark, high-contrast look, YT Shorts Edit for a center crop, or Insta Edit to keep the full source frame over a dimmed background. The browser records the clip in real time and downloads MP4 or WebM based on its recording support. The video stays on your device.
