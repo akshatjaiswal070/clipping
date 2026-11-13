@@ -77,3 +77,15 @@ footer { margin-top: 21px; }
   .stage { min-height: 240px; }
   video { height: 240px; }
 }
+.link-form { padding: 0 17px 16px; }
+.link-form label { display: block; margin-bottom: 5px; font-size: 13px; }
+.link-fields { display: flex; gap: 8px; }
+.link-fields input {
+  flex: 1; min-width: 0; padding: 8px; border: 1px solid var(--line);
+  border-radius: 8px; background: #121315; color: inherit;
+}
+.link-fields button {
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: #262824; color: inherit; cursor: pointer;
+}
+.link-form p { font-size: 12px; }

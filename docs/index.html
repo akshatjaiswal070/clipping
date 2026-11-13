@@ -28,6 +28,14 @@
         <span id="filename">No video selected</span>
         <label class="browse"><input id="source" type="file" accept="video/*"><span>Browse video</span></label>
       </div>
+      <form id="linkForm" class="link-form">
+        <label for="sourceLink">Source video URL</label>
+        <div class="link-fields">
+          <input id="sourceLink" type="url" placeholder="https://example.com/video.mp4" required>
+          <button id="loadLink" type="submit">Load video</button>
+        </div>
+        <p>Use a direct HTTPS video link. For YouTube or Instagram post links, use the <a href="https://github.com/akshatjaiswal070/clipping#readme">local importer</a>.</p>
+      </form>
     </section>
     <form id="clip" class="panel settings" aria-label="Edit settings">
       <fieldset id="editType">
@@ -62,12 +70,14 @@
       </div>
     </form>
   </div>
-  <footer>Video links, captions, music, and publishing are available in the <a href="https://github.com/akshatjaiswal070/clipping#readme">desktop setup</a>.</footer>
+  <footer>Captions, music, and publishing are available in the <a href="https://github.com/akshatjaiswal070/clipping#readme">desktop setup</a>.</footer>
 </main>
 <script>
 const element = id => document.getElementById(id);
 const video = element('preview');
 const source = element('source');
+const sourceLink = element('sourceLink');
+const loadLink = element('loadLink');
 const start = element('start');
 const end = element('end');
 const exportButton = element('export');
@@ -77,21 +87,44 @@ const editType = element('editType');
 const trim = element('trim');
 const filenames = {cold: 'cold-edit', shorts: 'yt-shorts-edit', insta: 'insta-edit'};
 let sourceUrl, outputUrl, audioContext, audioSource;
+let isRemote = false;
 const supported = typeof MediaRecorder !== 'undefined' &&
   typeof HTMLCanvasElement.prototype.captureStream === 'function' &&
   typeof AudioContext !== 'undefined';
 
-source.onchange = () => {
-  const file = source.files[0];
-  if (!file) return;
+function loadSource(url, name, remote) {
   exportButton.disabled = true;
   video.hidden = true;
   element('empty').hidden = false;
-  element('filename').textContent = file.name;
+  element('filename').textContent = name;
   status.textContent = 'Loading video…';
   download.hidden = true;
   if (sourceUrl) URL.revokeObjectURL(sourceUrl);
-  video.src = sourceUrl = URL.createObjectURL(file);
+  isRemote = remote;
+  sourceUrl = remote ? null : url;
+  if (remote) video.crossOrigin = 'anonymous';
+  else video.removeAttribute('crossorigin');
+  video.src = url;
+}
+source.onchange = () => {
+  const file = source.files[0];
+  if (!file) return;
+  loadSource(URL.createObjectURL(file), file.name, false);
+  source.value = '';
+};
+element('linkForm').onsubmit = event => {
+  event.preventDefault();
+  if (loadLink.disabled) return;
+  const url = new URL(sourceLink.value.trim());
+  if (url.protocol !== 'https:' || url.username || url.password) {
+    status.textContent = 'Enter a direct HTTPS video URL.';
+    return;
+  }
+  if (/(^|\.)(youtube\.com|youtu\.be|instagram\.com)$/.test(url.hostname)) {
+    status.textContent = 'Use the local importer for YouTube or Instagram post links.';
+    return;
+  }
+  loadSource(url.href, url.hostname, true);
 };
 video.onloadedmetadata = () => {
   const valid = Number.isFinite(video.duration) && video.duration > 0 && video.videoWidth > 0;
@@ -107,7 +140,9 @@ video.onloadedmetadata = () => {
 };
 video.onerror = () => {
   exportButton.disabled = true;
-  status.textContent = 'This video format could not be played.';
+  status.textContent = isRemote
+    ? 'Could not load this link. Use a direct video URL from a host that allows browser access, or browse for a file.'
+    : 'This video format could not be played.';
 };
 
 element('clip').onsubmit = async event => {
@@ -119,7 +154,7 @@ element('clip').onsubmit = async event => {
   }
   if (!supported || exportButton.disabled) return;
   const preset = editType.querySelector(':checked').value;
-  source.disabled = editType.disabled = trim.disabled = exportButton.disabled = true;
+  source.disabled = sourceLink.disabled = loadLink.disabled = editType.disabled = trim.disabled = exportButton.disabled = true;
   video.controls = false;
   download.hidden = true;
   status.textContent = 'Exporting in real time…';
@@ -218,7 +253,7 @@ element('clip').onsubmit = async event => {
     if (audioOutput) audioSource.disconnect(audioOutput);
     for (const track of stream.getTracks()) track.stop();
     video.controls = true;
-    source.disabled = editType.disabled = trim.disabled = exportButton.disabled = false;
+    source.disabled = sourceLink.disabled = loadLink.disabled = editType.disabled = trim.disabled = exportButton.disabled = false;
   }
 };
 </script>
