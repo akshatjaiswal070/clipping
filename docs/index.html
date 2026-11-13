@@ -1,31 +1,69 @@
 <!doctype html>
 <html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clipping</title>
-<style>
-:root{color-scheme:dark;font:16px system-ui;background:#101114;color:#f2f2f4;accent-color:#b9fb75}
-body{max-width:720px;margin:44px auto;padding:0 20px}section{background:#1a1b20;border:1px solid #303137;border-radius:14px;padding:20px}h1{letter-spacing:-.06em;font-size:38px}a{color:#b9fb75}video{width:100%;max-height:380px;background:#09090a;margin:16px 0}label{display:inline-flex;flex-direction:column;gap:5px;margin:0 10px 12px 0}input,button,select{font:inherit}select{padding:6px}input[type=number]{width:110px;padding:6px}button{padding:9px 14px;border:0;border-radius:7px;background:#b9fb75;color:#17210d;font-weight:700}button:disabled{opacity:.45}p{line-height:1.5}
-</style>
-<h1>Clipping</h1>
-<section>
-  <label>Source video<input id="source" type="file" accept="video/*"></label>
-  <video id="preview" controls playsinline></video>
-  <form id="clip">
-    <label>Edit type<select id="editType" aria-describedby="editDescription">
-      <option value="cold">Cold Edit</option>
-      <option value="shorts" selected>YT Shorts Edit</option>
-      <option value="insta">Insta Edit</option>
-    </select></label>
-    <p id="editDescription"></p>
-    <label>Start (seconds)<input id="start" type="number" min="0" step="any" value="0" required></label>
-    <label>End (seconds)<input id="end" type="number" min="0" step="any" required></label>
-    <button id="export" disabled>Export vertical clip</button>
-  </form>
-  <p id="status" role="status">Choose a video to start.</p>
-  <a id="download" hidden>Download clip</a>
-</section>
-<p>For video URL import, captions, music, or social uploads, <a href="https://github.com/akshatjaiswal070/clipping#readme">run Clipping on your computer</a>.</p>
+<title>Clipping Studio</title>
+<link rel="stylesheet" href="./studio.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-icon" aria-hidden="true">✂</span>Clipping</div>
+  <a href="https://github.com/akshatjaiswal070/clipping#readme">Desktop setup ↗</a>
+</header>
+<main>
+  <div class="intro"><h1>Clip editor</h1><p>Turn a video into a vertical clip for Shorts or Reels.</p></div>
+  <div class="workspace">
+    <section class="panel preview-panel" aria-labelledby="previewTitle">
+      <div class="panel-head"><h2 id="previewTitle">Source preview</h2><span class="format">9:16 export</span></div>
+      <div class="stage">
+        <div id="empty" class="empty">
+          <div class="film" aria-hidden="true"><span>▶</span></div>
+          <strong>Choose a source video</strong>
+          <p>Your video stays on this device.</p>
+        </div>
+        <video id="preview" controls playsinline hidden></video>
+      </div>
+      <div class="source-bar">
+        <span id="filename">No video selected</span>
+        <label class="browse"><input id="source" type="file" accept="video/*"><span>Browse video</span></label>
+      </div>
+    </section>
+    <form id="clip" class="panel settings" aria-label="Edit settings">
+      <fieldset id="editType">
+        <legend>Edit style</legend>
+        <label class="preset">
+          <input type="radio" name="preset" value="cold">
+          <span class="swatch cold" aria-hidden="true">✦</span>
+          <span><strong>Cold Edit</strong><small>Dark contrast and a cool tint</small></span>
+        </label>
+        <label class="preset">
+          <input type="radio" name="preset" value="shorts" checked>
+          <span class="swatch shorts" aria-hidden="true">▶</span>
+          <span><strong>YT Shorts Edit</strong><small>Full-screen vertical crop</small></span>
+        </label>
+        <label class="preset">
+          <input type="radio" name="preset" value="insta">
+          <span class="swatch insta" aria-hidden="true">◫</span>
+          <span><strong>Insta Edit</strong><small>Full frame over a dimmed background</small></span>
+        </label>
+      </fieldset>
+      <fieldset id="trim">
+        <legend>Trim range</legend>
+        <div class="trim-fields">
+          <label>Start (seconds)<input id="start" type="number" min="0" step="any" value="0" required></label>
+          <label>End (seconds)<input id="end" type="number" min="0" step="any" required></label>
+        </div>
+      </fieldset>
+      <div class="export">
+        <button id="export" disabled>Export vertical clip <span aria-hidden="true">↗</span></button>
+        <p id="status" role="status">Choose a video to start.</p>
+        <a id="download" hidden>Download clip ↓</a>
+      </div>
+    </form>
+  </div>
+  <footer>Video links, captions, music, and publishing are available in the <a href="https://github.com/akshatjaiswal070/clipping#readme">desktop setup</a>.</footer>
+</main>
 <script>
 const element = id => document.getElementById(id);
 const video = element('preview');
@@ -36,16 +74,8 @@ const exportButton = element('export');
 const status = element('status');
 const download = element('download');
 const editType = element('editType');
-const presets = {
-  cold: {description: 'Dark, high-contrast center crop.', filename: 'cold-edit'},
-  shorts: {description: 'Full-screen vertical center crop.', filename: 'yt-shorts-edit'},
-  insta: {description: 'Full source frame with a dimmed background.', filename: 'insta-edit'}
-};
-function describePreset() {
-  element('editDescription').textContent = presets[editType.value].description;
-}
-editType.onchange = describePreset;
-describePreset();
+const trim = element('trim');
+const filenames = {cold: 'cold-edit', shorts: 'yt-shorts-edit', insta: 'insta-edit'};
 let sourceUrl, outputUrl, audioContext, audioSource;
 const supported = typeof MediaRecorder !== 'undefined' &&
   typeof HTMLCanvasElement.prototype.captureStream === 'function' &&
@@ -55,12 +85,18 @@ source.onchange = () => {
   const file = source.files[0];
   if (!file) return;
   exportButton.disabled = true;
+  video.hidden = true;
+  element('empty').hidden = false;
+  element('filename').textContent = file.name;
+  status.textContent = 'Loading video…';
   download.hidden = true;
   if (sourceUrl) URL.revokeObjectURL(sourceUrl);
   video.src = sourceUrl = URL.createObjectURL(file);
 };
 video.onloadedmetadata = () => {
   const valid = Number.isFinite(video.duration) && video.duration > 0 && video.videoWidth > 0;
+  video.hidden = !valid;
+  element('empty').hidden = valid;
   start.max = end.max = valid ? video.duration : 0;
   start.value = 0;
   end.value = valid ? Math.min(video.duration, 15) : '';
@@ -81,8 +117,9 @@ element('clip').onsubmit = async event => {
     status.textContent = 'Choose a start and end within the video.';
     return;
   }
-  const preset = editType.value;
-  source.disabled = editType.disabled = exportButton.disabled = true;
+  if (!supported || exportButton.disabled) return;
+  const preset = editType.querySelector(':checked').value;
+  source.disabled = editType.disabled = trim.disabled = exportButton.disabled = true;
   video.controls = false;
   download.hidden = true;
   status.textContent = 'Exporting in real time…';
@@ -169,7 +206,7 @@ element('clip').onsubmit = async event => {
     const type = recorder.mimeType || chunks[0].type;
     outputUrl = URL.createObjectURL(new Blob(chunks, {type}));
     download.href = outputUrl;
-    download.download = presets[preset].filename + '.' + (type.startsWith('video/mp4') ? 'mp4' : 'webm');
+    download.download = filenames[preset] + '.' + (type.startsWith('video/mp4') ? 'mp4' : 'webm');
     download.hidden = false;
     status.textContent = 'Your clip is ready.';
   } catch (error) {
@@ -181,7 +218,7 @@ element('clip').onsubmit = async event => {
     if (audioOutput) audioSource.disconnect(audioOutput);
     for (const track of stream.getTracks()) track.stop();
     video.controls = true;
-    source.disabled = editType.disabled = exportButton.disabled = false;
+    source.disabled = editType.disabled = trim.disabled = exportButton.disabled = false;
   }
 };
 </script>

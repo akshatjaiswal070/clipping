@@ -1,0 +1,79 @@
+:root {
+  color-scheme: dark;
+  font: 15px/1.5 Geist, Inter, system-ui, sans-serif;
+  background: #111214;
+  color: #f3f4f0;
+  accent-color: #c2f483;
+  --muted: #a8aca4;
+  --line: #343633;
+  --accent: #c2f483;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+a { color: var(--accent); text-underline-offset: 4px; }
+button, input { font: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; border-bottom: 1px solid var(--line);
+  padding: 15px max(24px, calc((100vw - 1120px) / 2));
+}
+.brand { display: flex; gap: 10px; align-items: center; font-size: 19px; font-weight: 750; }
+.brand-icon { background: var(--accent); color: #18240f; border-radius: 9px; width: 34px; line-height: 34px; text-align: center; }
+.topbar a { color: #d1d5cb; font-size: 13px; }
+main { max-width: 1168px; margin: auto; padding: 36px 24px; }
+.intro { margin-bottom: 24px; }
+h1 { margin: 0; font-size: clamp(36px, 5vw, 54px); line-height: 1.1; letter-spacing: -.065em; }
+p { margin: 7px 0 0; color: var(--muted); }
+.workspace { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(305px, 1fr); gap: 18px; align-items: start; }
+.panel { background: #1b1c1e; border: 1px solid var(--line); border-radius: 16px; min-width: 0; }
+.panel-head, .source-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 17px; }
+h2, legend { font-size: 15px; font-weight: 700; margin: 0; }
+.format { color: var(--muted); font-size: 12px; }
+.stage {
+  display: grid; place-items: center; min-height: 340px; margin: 0 12px;
+  border-radius: 11px; overflow: hidden; background: #101113;
+  background-image: radial-gradient(#3a4037 1px, transparent 1px);
+  background-size: 19px 19px;
+}
+.empty { text-align: center; padding: 24px; }
+.film {
+  display: grid; place-items: center; width: 60px; height: 80px; margin: 0 auto 17px;
+  border: 1px solid #48513f; border-radius: 12px; color: var(--accent); background: #21271d;
+}
+video { width: 100%; height: 340px; background: #0c0d0f; }
+#filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
+.browse { position: relative; flex: none; display: block; border-radius: 8px; border: 1px solid var(--line); padding: 8px 12px; }
+.browse input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.browse:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+.settings { padding: 17px; }
+fieldset { border: 0; padding: 0; margin: 0 0 17px; min-width: 0; }
+legend { padding: 0; margin-bottom: 9px; }
+.preset {
+  position: relative; display: flex; align-items: center; gap: 11px; padding: 9px;
+  border: 1px solid var(--line); border-radius: 10px; margin-bottom: 7px; cursor: pointer;
+}
+.preset:has(input:checked) { border-color: #a4ce71; background: #272f22; }
+.preset:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.preset input { position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.preset strong, .preset small { display: block; }
+.preset small { color: var(--muted); }
+.swatch { flex: none; display: grid; place-items: center; width: 33px; height: 39px; border-radius: 6px; }
+.cold { background: #283448; color: #b9d4ff; }
+.shorts { background: #472e32; color: #ffc2c7; }
+.insta { background: #42314a; color: #f3cbff; }
+.trim-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.trim-fields label { color: var(--muted); font-size: 12px; }
+.trim-fields input { display: block; width: 100%; margin-top: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #121315; color: #fff; }
+.export button { display: flex; justify-content: space-between; width: 100%; padding: 10px 13px; border: 0; border-radius: 8px; background: var(--accent); color: #18240f; font-weight: 750; cursor: pointer; }
+.export button:disabled { opacity: .52; cursor: default; }
+#status, footer { font-size: 13px; color: var(--muted); }
+#download { display: inline-block; margin-top: 8px; }
+footer { margin-top: 21px; }
+@media (max-width: 760px) {
+  .workspace { grid-template-columns: 1fr; }
+  main { padding: 26px 16px; }
+  .stage { min-height: 240px; }
+  video { height: 240px; }
+}
