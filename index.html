@@ -9,6 +9,7 @@
 header{border-bottom:1px solid #303137;margin-bottom:30px;padding-bottom:20px}h1{font-size:32px;margin:0;letter-spacing:-.06em}h1 span{color:#b9fb75}h2{font-size:18px;margin:0 0 16px}
 main{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
 section{padding:20px;border:1px solid #303137;border-radius:14px;background:#1a1b20}
+.link-import{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}.link-import label{flex:1;min-width:170px}.link-import input{width:100%;padding:8px;border-radius:8px;background:#24262d;color:inherit;border:1px solid #41434c}.link-import button{align-self:end}
 video{width:100%;height:320px;background:#0c0d0f;border-radius:10px;margin-top:16px}
 input,select,button,a{font:inherit}button,select,input[type=number]{background:#24262d;color:inherit;border:1px solid #41434c;border-radius:8px;padding:8px}
 button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button.primary{background:#b9fb75;color:#17210d;border-color:#b9fb75;font-weight:700;padding:10px 15px}
@@ -19,7 +20,12 @@ label{display:inline-flex;flex-direction:column;gap:6px;font-size:13px;color:#c5
 </style>
 <header><h1><span>▰</span> Clipping</h1></header>
 <main>
-<section><h2>Source video</h2><input id="source" type="file" accept="video/*,.mkv,.mov" aria-label="Source video"><video id="preview" controls playsinline></video><p id="sourceStatus" role="status">Choose a video from your device.</p></section>
+<section><h2>Source video</h2>
+<form id="linkForm" class="link-import">
+<label>Video URL<input id="url" type="url" required placeholder="https://www.youtube.com/watch?v=…"></label>
+<button id="import" type="submit">Import video</button>
+</form>
+<input id="source" type="file" accept="video/*,.mkv,.mov" aria-label="Source video"><video id="preview" controls playsinline></video><p id="sourceStatus" role="status">Paste a video link or choose a file from your device.</p></section>
 <section>
 <h2>Clip ranges</h2>
 <div class="tools">
@@ -48,32 +54,49 @@ function controls() {
 }
 async function request(url, options) {
   const response = await fetch(url, options);
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'The request failed.');
   return data;
 }
-get('source').onchange = async event => {
-  const file = event.target.files[0];
-  if (!file) return;
+async function loadSource(url, options, message, file) {
   source = null;
   previewEnd = null;
   get('ranges').replaceChildren();
   controls();
+  video.removeAttribute('src');
   if (objectURL) URL.revokeObjectURL(objectURL);
-  video.src = objectURL = URL.createObjectURL(file);
-  const input = event.target;
-  input.disabled = true;
-  get('sourceStatus').textContent = 'Reading the video locally…';
+  objectURL = null;
+  video.load();
+  const inputs = ['source', 'url', 'import'].map(get);
+  inputs.forEach(input => input.disabled = true);
+  get('sourceStatus').textContent = message;
   try {
-    source = await request('/api/source', {method:'POST', body:file});
-    get('sourceStatus').textContent = 'Duration: ' + source.duration.toFixed(2) + ' seconds';
+    source = await request(url, options);
+    if (file) video.src = objectURL = URL.createObjectURL(file);
+    else if (source.preview) video.src = source.preview;
+    const duration = source.duration.toFixed(2) + ' seconds';
+    get('sourceStatus').textContent = file || source.preview
+      ? 'Duration: ' + duration
+      : 'Duration: ' + duration + '. Preview unavailable for this format.';
     suggest();
   } catch (error) {
     get('sourceStatus').textContent = error.message;
   } finally {
-    input.disabled = false;
+    inputs.forEach(input => input.disabled = false);
     controls();
   }
+}
+get('source').onchange = event => {
+  const file = event.target.files[0];
+  if (file) loadSource('/api/source', {method:'POST', body:file}, 'Reading the video locally…', file);
+  event.target.value = '';
+};
+get('linkForm').onsubmit = event => {
+  event.preventDefault();
+  loadSource('/api/import', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({url:get('url').value.trim()})
+  }, 'Importing the video…');
 };
 function addRange(start, end) {
   const holder = get('ranges');

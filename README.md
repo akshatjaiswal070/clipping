@@ -14,3 +14,9 @@ python3 app.py
 4. Select **Export clips**, then download each MP4. Download your exports before closing the app. The server clears its temporary files when it shuts down normally.
 
 The suggested ranges are evenly spaced. You choose which moments to keep. The browser may be unable to preview some formats that FFmpeg can export.
+
+## Import a video link
+
+Paste a public YouTube, Shorts, Instagram, TikTok, or other supported video URL and click **Import video**. Export works the same way as with local files. Availability depends on the platform and video. Use links for footage you have permission to download and edit.
+
+Link import uses yt-dlp. Install it on your PATH or set the YTDLP environment variable to its executable path. The app also detects the copy in the earlier clipping workspace on this Mac. Install Node.js for YouTube extraction. Local files work without yt-dlp or Node.js.

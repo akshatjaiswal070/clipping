@@ -3,12 +3,14 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import math
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 from tempfile import TemporaryDirectory
 from threading import Lock
@@ -18,12 +20,14 @@ import webbrowser
 
 HERE = Path(__file__).resolve().parent
 EXISTING_FFMPEG = Path.home() / "Documents/Codex/2026-11-08/ap/outputs/shortflow/bin/ffmpeg"
+EXISTING_YTDLP = HERE.parent / "clipping 2/work/tjr/yt-dlp-mac"
 MAX_UPLOAD = 8 * 1024 ** 3
 
 
 class Clipper:
-    def __init__(self, ffmpeg, directory):
+    def __init__(self, ffmpeg, directory, downloader=None):
         self.ffmpeg = ffmpeg
+        self.downloader = downloader
         self.directory = directory
         self.sources = {}
         self.jobs = {}
@@ -108,10 +112,45 @@ class Handler(BaseHTTPRequestHandler):
         with path.open("rb") as stream:
             shutil.copyfileobj(stream, self.wfile)
 
+    def preview(self, path):
+        size = path.stat().st_size
+        start, end = 0, size - 1
+        byte_range = self.headers.get("Range")
+        if byte_range:
+            match = re.fullmatch(r"bytes=(\d+)-(\d*)", byte_range)
+            if not match:
+                self.send_error(416)
+                return
+            start = int(match[1])
+            end = min(end, int(match[2])) if match[2] else end
+            if start > end:
+                self.send_error(416)
+                return
+        self.send_response(206 if byte_range else 200)
+        self.send_header("Content-Type", "video/" + path.suffix[1:])
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if byte_range:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with path.open("rb") as stream:
+            stream.seek(start)
+            remaining = end - start + 1
+            while remaining:
+                chunk = stream.read(min(remaining, 1024 * 1024))
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
     def do_GET(self):
         path = urlsplit(self.path).path
         if path == "/":
             self.file(HERE / "index.html", "text/html; charset=utf-8")
+        elif re.fullmatch(r"/sources/[a-f0-9]{32}", path):
+            source = self.clipper.sources.get(path.rsplit("/", 1)[1])
+            if source and source[0].suffix in (".mp4", ".webm"):
+                self.preview(source[0])
+            else:
+                self.send_error(404)
         elif re.fullmatch(r"/api/jobs/[a-f0-9]{32}", path):
             try:
                 self.reply(self.clipper.snapshot(path.rsplit("/", 1)[1]))
@@ -140,6 +179,8 @@ class Handler(BaseHTTPRequestHandler):
             size = int(self.headers.get("Content-Length", "0"))
             if self.path == "/api/source":
                 self.upload(size)
+            elif self.path == "/api/import" and 0 < size <= 8192:
+                self.import_link(json.loads(self.rfile.read(size))["url"])
             elif self.path == "/api/export" and 0 < size <= 65536:
                 self.export(json.loads(self.rfile.read(size)))
             else:
@@ -168,6 +209,48 @@ class Handler(BaseHTTPRequestHandler):
             raise
         self.clipper.sources[source_id] = (path, duration)
         self.reply({"id": source_id, "duration": duration})
+
+    def import_link(self, url):
+        if not self.clipper.downloader:
+            raise ValueError("Install yt-dlp or set YTDLP to its executable path.")
+        if not isinstance(url, str):
+            raise ValueError("Enter a public video URL.")
+        parsed = urlsplit(url)
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                or parsed.username is not None or parsed.port not in (None, 80, 443)):
+            raise ValueError("Enter a public http or https video URL.")
+        addresses = socket.getaddrinfo(parsed.hostname, None, type=socket.SOCK_STREAM)
+        if any(not ipaddress.ip_address(address[4][0]).is_global for address in addresses):
+            raise ValueError("Enter a public video URL.")
+        source_id = uuid4().hex
+        folder = self.clipper.directory / source_id
+        folder.mkdir()
+        try:
+            result = subprocess.run([
+                self.clipper.downloader, "--ignore-config", "--no-playlist", "--no-progress",
+                "--max-downloads", "1", "--max-filesize", "8G", "--no-warnings",
+                "--js-runtimes", "node", "--ffmpeg-location", self.clipper.ffmpeg,
+                "-f", "bv[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
+                "-o", str(folder / "video.%(ext)s"), "--", url,
+            ], capture_output=True, text=True, timeout=900)
+            files = [path for path in folder.glob("video.*") if path.suffix not in (".part", ".ytdl")]
+            # yt-dlp reports 101 when it stops at the requested download limit.
+            if result.returncode not in (0, 101) or len(files) != 1:
+                detail = result.stderr.strip().splitlines()
+                raise ValueError(detail[-1] if detail else "No video was downloaded. Try a single public video link.")
+            path = files[0]
+            if path.stat().st_size > MAX_UPLOAD:
+                raise ValueError("Choose a video smaller than 8 GB.")
+            duration = self.clipper.duration(path)
+            if duration < 0.1:
+                raise ValueError("The source video is too short.")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            shutil.rmtree(folder)
+            raise
+        self.clipper.sources[source_id] = (path, duration)
+        self.reply({"id": source_id, "duration": duration, "preview": (
+            f"/sources/{source_id}" if path.suffix in (".mp4", ".webm") else None
+        )})
 
     def export(self, data):
         source, duration = self.clipper.sources[data["source"]]
@@ -199,8 +282,11 @@ def main():
         ffmpeg = str(EXISTING_FFMPEG)
     if not ffmpeg:
         parser.error("Install FFmpeg or set FFMPEG to its executable path.")
+    downloader = os.environ.get("YTDLP") or shutil.which("yt-dlp")
+    if not downloader and EXISTING_YTDLP.is_file():
+        downloader = str(EXISTING_YTDLP)
     with TemporaryDirectory(prefix="clipping-") as directory:
-        clipper = Clipper(ffmpeg, Path(directory))
+        clipper = Clipper(ffmpeg, Path(directory), downloader)
         handler = partial(Handler, clipper=clipper)
         with ThreadingHTTPServer(("127.0.0.1", args.port), handler) as server:
             url = f"http://127.0.0.1:{server.server_port}"
