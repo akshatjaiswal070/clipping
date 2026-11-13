@@ -11,11 +11,13 @@ main{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
 section{padding:20px;border:1px solid #303137;border-radius:14px;background:#1a1b20}
 .link-import{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}.link-import label{flex:1;min-width:170px}.link-import input{width:100%;padding:8px;border-radius:8px;background:#24262d;color:inherit;border:1px solid #41434c}.link-import button{align-self:end}
 video{width:100%;height:320px;background:#0c0d0f;border-radius:10px;margin-top:16px}
-input,select,button,a{font:inherit}button,select,input[type=number]{background:#24262d;color:inherit;border:1px solid #41434c;border-radius:8px;padding:8px}
+input,select,button,a,textarea{font:inherit}button,select,input[type=number]{background:#24262d;color:inherit;border:1px solid #41434c;border-radius:8px;padding:8px}
 button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button.primary{background:#b9fb75;color:#17210d;border-color:#b9fb75;font-weight:700;padding:10px 15px}
 label{display:inline-flex;flex-direction:column;gap:6px;font-size:13px;color:#c5c6cc}input[type=number]{width:90px}p,output{color:#c5c6cc;font-size:14px}
 .tools,.settings,.row{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.settings{margin:18px 0}.row{padding:10px 0;border-bottom:1px solid #303137}.row span{font-variant-numeric:tabular-nums;align-self:center;min-width:24px;color:#b9fb75}.row input{width:84px}
 #downloads a{display:inline-block;margin:8px 14px 0 0;color:#b9fb75}
+textarea{width:100%;background:#24262d;color:inherit;border:1px solid #41434c;border-radius:8px;padding:8px;resize:vertical}.caption-field{width:100%}
+fieldset{border:1px solid #41434c;border-radius:8px;margin:16px 0;padding:12px}.publish-panel{margin-top:16px}.publish-panel label{margin-bottom:8px;width:100%}.publish-panel input{padding:8px;background:#24262d;color:inherit;border:1px solid #41434c;border-radius:8px}
 @media(max-width:760px){main{grid-template-columns:1fr}video{height:240px}}
 </style>
 <header><h1><span>▰</span> Clipping</h1></header>
@@ -35,17 +37,33 @@ label{display:inline-flex;flex-direction:column;gap:6px;font-size:13px;color:#c5
 <button id="add" disabled>Add range</button>
 </div>
 <div id="ranges"></div>
+<fieldset><legend>Background music</legend>
+<label>Audio file<input id="music" type="file" accept="audio/*"></label>
+<label>Music volume (%)<input id="volume" type="number" min="0" max="100" value="25"></label>
+</fieldset>
 <div class="settings">
 <label>Resolution<select id="resolution"><option value="1080">1080 × 1920</option><option value="4k">2160 × 3840</option></select></label>
 <label>Framing<select id="framing"><option value="crop">Center crop</option><option value="fit">Fit with padding</option></select></label>
 <button class="primary" id="export" disabled>Export clips</button>
 </div>
 <output id="status" role="status"></output><div id="downloads"></div>
+<form id="publishForm" class="publish-panel" hidden>
+<h2>Upload a clip</h2>
+<label>Exported clip<select id="publishFile"></select></label>
+<label>YouTube title<input id="publishTitle" maxlength="100"></label>
+<label>Post caption / YouTube description<textarea id="postCaption" rows="3" maxlength="5000"></textarea></label>
+<label>YouTube visibility<select id="privacy"><option value="private">Private</option><option value="unlisted">Unlisted</option><option value="public">Public</option></select></label>
+<div class="tools"><button value="youtube">Upload to YouTube</button><button value="instagram">Publish Instagram Reel</button></div>
+<p role="status" id="publishStatus"></p>
+<a href="https://studio.youtube.com/" target="_blank" rel="noopener">YouTube Studio</a> ·
+<a href="https://business.facebook.com/latest/" target="_blank" rel="noopener">Meta Business Suite</a>
+</form>
 </section>
 </main>
 <script>
 const get = id => document.getElementById(id);
 const video = get('preview');
+let exportJob = null;
 let source = null, objectURL = null, previewEnd = null, exporting = false;
 function controls() {
   get('suggest').disabled = !source;
@@ -102,7 +120,7 @@ function addRange(start, end) {
   const holder = get('ranges');
   const row = document.createElement('div');
   row.className = 'row';
-  row.innerHTML = '<span></span><label>Start (sec)<input type="number" min="0" step=".01"></label><label>End (sec)<input type="number" min="0" step=".01"></label><button>Preview</button><button>Remove</button>';
+  row.innerHTML = '<span></span><label>Start (sec)<input type="number" min="0" step=".01"></label><label>End (sec)<input type="number" min="0" step=".01"></label><button>Preview</button><button>Remove</button><label class="caption-field">On-screen caption<textarea maxlength="240" rows="2"></textarea></label>';
   const [a,b] = row.querySelectorAll('input');
   const [play,remove] = row.querySelectorAll('button');
   a.value = start.toFixed(2); b.value = end.toFixed(2);
@@ -155,17 +173,28 @@ video.addEventListener('timeupdate', () => {
 });
 get('export').onclick = async () => {
   const status = get('status'), downloads = get('downloads');
-  const clips = [...get('ranges').children].map(row => [...row.querySelectorAll('input')].map(el => el.valueAsNumber));
+  const rows = [...get('ranges').children];
+  const clips = rows.map(row => [...row.querySelectorAll('input')].map(el => el.valueAsNumber));
   if (clips.some(([a,b]) => !Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b > source.duration || b-a < .099)) {
     status.textContent = 'Every range needs valid times at least 0.1 seconds apart.';
     return;
   }
+  if (!get('volume').reportValidity()) return;
   exporting = true; controls(); downloads.replaceChildren();
+  get('publishForm').hidden = true;
+  get('publishFile').replaceChildren();
+  get('publishStatus').textContent = '';
+  const captions = rows.map(row => row.querySelector('textarea').value.trim());
+  const musicFile = get('music').files[0];
+  const volume = Number(get('volume').value) / 100;
+  const resolution = get('resolution').value, framing = get('framing').value;
+  const sourceId = source.id;
   status.textContent = 'Queueing export…';
   try {
+    const music = musicFile ? (await request('/api/music', {method:'POST', body:musicFile})).id : null;
     const {id} = await request('/api/export', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({source:source.id, clips, resolution:get('resolution').value, framing:get('framing').value})
+      body:JSON.stringify({source:sourceId, clips, resolution, framing, captions, music, volume})
     });
     while (true) {
       const job = await request('/api/jobs/' + id);
@@ -174,6 +203,11 @@ get('export').onclick = async () => {
         link.href = file.url; link.textContent = 'Download ' + file.name;
         downloads.append(link);
       }
+      if (job.status === 'done' || job.status === 'error') {
+        exportJob = id;
+        get('publishFile').replaceChildren(...job.files.map(file => new Option(file.name, file.name)));
+        get('publishForm').hidden = !job.files.length;
+      }
       if (job.status === 'error') throw new Error(job.error);
       if (job.status === 'done') { status.textContent = job.total + ' clips ready.'; break; }
       status.textContent = job.current ? 'Exporting clip ' + job.current + ' of ' + job.total + '…' : 'Waiting to export…';
@@ -181,6 +215,40 @@ get('export').onclick = async () => {
     }
   } catch (error) { status.textContent = error.message; }
   finally { exporting = false; controls(); }
+};
+get('publishForm').onsubmit = async event => {
+  event.preventDefault();
+  const platform = event.submitter.value;
+  const job = exportJob, file = get('publishFile').value;
+  const title = get('publishTitle').value.trim();
+  const caption = get('postCaption').value;
+  const privacy = get('privacy').value;
+  const status = get('publishStatus');
+  if (platform === 'youtube' && !title) {
+    status.textContent = 'Enter a YouTube title.';
+    return;
+  }
+  const target = platform === 'instagram' ? 'Instagram publicly' : 'YouTube as ' + privacy;
+  if (!confirm('Send ' + file + ' to ' + target + '?')) return;
+  const buttons = [...get('publishForm').querySelectorAll('button')];
+  buttons.forEach(button => button.disabled = true);
+  status.textContent = 'Uploading to ' + target + '…';
+  try {
+    const result = await request('/api/publish', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({job,file,platform,title,caption,privacy})
+    });
+    status.textContent = result.pending ? 'This upload is already in progress.'
+      : platform === 'youtube' ? 'YouTube accepted the upload (' + result.visibility + '). '
+      : 'Instagram published the Reel. Media ID ' + result.id + '.';
+    if (result.url) {
+      const link = document.createElement('a');
+      link.href = result.url;
+      link.textContent = 'Open video';
+      status.append(link);
+    }
+  } catch (error) { status.textContent = error.message; }
+  finally { buttons.forEach(button => button.disabled = false); }
 };
 </script>
 </html>

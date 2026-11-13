@@ -13,10 +13,13 @@ import shutil
 import socket
 import subprocess
 from tempfile import TemporaryDirectory
+import textwrap
 from threading import Lock
 from urllib.parse import urlsplit
 from uuid import uuid4
 import webbrowser
+
+import publishing
 
 HERE = Path(__file__).resolve().parent
 EXISTING_FFMPEG = Path.home() / "Documents/Codex/2026-11-08/ap/outputs/shortflow/bin/ffmpeg"
@@ -31,6 +34,8 @@ class Clipper:
         self.directory = directory
         self.sources = {}
         self.jobs = {}
+        self.music = {}
+        self.posts = {}
         self.lock = Lock()
         self.worker = ThreadPoolExecutor(max_workers=1)
 
@@ -54,7 +59,7 @@ class Clipper:
         with self.lock:
             self.jobs[job_id].update(values)
 
-    def render(self, job_id, source, clips, resolution, framing):
+    def render(self, job_id, source, clips, resolution, framing, captions, music, volume):
         folder = self.directory / job_id
         files = []
         try:
@@ -65,17 +70,33 @@ class Clipper:
                 vf = f"scale={size}:force_original_aspect_ratio=increase:force_divisible_by=2,crop={size}"
             else:
                 vf = f"scale={size}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={size}:(ow-iw)/2:(oh-ih)/2"
+            probe = subprocess.run([self.ffmpeg, "-hide_banner", "-i", str(source)],
+                                   capture_output=True, text=True, timeout=30) if music else None
+            has_audio = probe and re.search(r"Stream #.*Audio:", probe.stderr)
+            if music and has_audio:
+                audio = ["-filter_complex", f"[1:a]volume={volume}[music];[0:a][music]amix=duration=longest:normalize=0,alimiter=limit=0.95:level=0:latency=1[a]", "-map", "[a]"]
+            elif music:
+                audio = ["-map", "1:a:0", "-af", f"volume={volume}"]
+            else:
+                audio = ["-map", "0:a:0?"]
             for index, (start, end) in enumerate(clips, 1):
                 name = f"clip-{index:02}.mp4"
                 self.update(job_id, status="rendering", current=index)
+                filters = vf + ",setsar=1"
+                if captions[index - 1]:
+                    (folder / "caption.txt").write_text("\n".join(textwrap.fill(line, width=28) for line in captions[index - 1].splitlines()), encoding="utf-8")
+                    filters += (f",drawtext=textfile=caption.txt:expansion=none:font=sans:"
+                                f"fontsize={width // 22}:fontcolor=white:borderw={width // 360}:"
+                                "x=(w-tw)/2:y=h*0.78-th/2")
                 result = subprocess.run([
                     self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
-                    "-ss", str(start), "-i", str(source), "-t", str(end - start),
-                    "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf + ",setsar=1",
+                    "-ss", str(start), "-i", str(source),
+                    *(["-stream_loop", "-1", "-i", str(music)] if music else []), "-t", str(end - start),
+                    "-map", "0:v:0", *audio, "-vf", filters,
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
                     "-movflags", "+faststart", str(folder / name),
-                ], capture_output=True, text=True, timeout=900)
+                ], capture_output=True, text=True, timeout=900, cwd=folder)
                 if result.returncode:
                     (folder / name).unlink(missing_ok=True)
                     raise ValueError(result.stderr.strip()[-400:] or "FFmpeg could not export this clip.")
@@ -179,6 +200,10 @@ class Handler(BaseHTTPRequestHandler):
             size = int(self.headers.get("Content-Length", "0"))
             if self.path == "/api/source":
                 self.upload(size)
+            elif self.path == "/api/music":
+                self.upload_music(size)
+            elif self.path == "/api/publish" and 0 < size <= 65536:
+                self.publish(json.loads(self.rfile.read(size)))
             elif self.path == "/api/import" and 0 < size <= 8192:
                 self.import_link(json.loads(self.rfile.read(size))["url"])
             elif self.path == "/api/export" and 0 < size <= 65536:
@@ -188,19 +213,65 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, TypeError, OSError, subprocess.TimeoutExpired) as error:
             self.reply({"error": str(error)}, 400)
 
+    def upload_music(self, size):
+        if not 0 < size <= 100 * 1024 ** 2:
+            raise ValueError("Choose an audio file up to 100 MB.")
+        music_id = uuid4().hex
+        path = self.clipper.directory / music_id
+        try:
+            self.receive(path, size)
+            result = subprocess.run([self.clipper.ffmpeg, "-hide_banner", "-i", str(path)],
+                                    capture_output=True, text=True, timeout=30)
+            if not re.search(r"Stream #.*Audio:", result.stderr):
+                raise ValueError("Choose a file containing an audio track.")
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            path.unlink(missing_ok=True)
+            raise
+        self.clipper.music[music_id] = path
+        self.reply({"id": music_id})
+
+    def receive(self, path, size):
+        with path.open("wb") as stream:
+            while size:
+                chunk = self.rfile.read(min(size, 1024 * 1024))
+                if not chunk:
+                    raise ValueError("The upload ended early. Try again.")
+                stream.write(chunk)
+                size -= len(chunk)
+
+    def publish(self, data):
+        platform, job_id, name = data["platform"], data["job"], data["file"]
+        if platform not in ("youtube", "instagram"):
+            raise ValueError("Choose YouTube or Instagram.")
+        if not any(item["name"] == name for item in self.clipper.snapshot(job_id)["files"]):
+            raise ValueError("Choose a finished clip.")
+        key = (platform, job_id, name)
+        with self.clipper.lock:
+            if key in self.clipper.posts:
+                self.reply(self.clipper.posts[key])
+                return
+            self.clipper.posts[key] = {"pending": True}
+        clip = self.clipper.directory / job_id / name
+        try:
+            if platform == "youtube":
+                result = publishing.youtube(clip, data["title"], data["caption"], data["privacy"])
+            else:
+                result = publishing.instagram(clip, data["caption"])
+        except Exception:
+            with self.clipper.lock:
+                self.clipper.posts.pop(key)
+            raise
+        with self.clipper.lock:
+            self.clipper.posts[key] = result
+        self.reply(result)
+
     def upload(self, size):
         if not 0 < size <= MAX_UPLOAD:
             raise ValueError("Choose a video smaller than 8 GB.")
         source_id = uuid4().hex
         path = self.clipper.directory / source_id
         try:
-            with path.open("wb") as stream:
-                while size:
-                    chunk = self.rfile.read(min(size, 1024 * 1024))
-                    if not chunk:
-                        raise ValueError("The upload ended early. Try again.")
-                    stream.write(chunk)
-                    size -= len(chunk)
+            self.receive(path, size)
             duration = self.clipper.duration(path)
             if duration < 0.1:
                 raise ValueError("The source video is too short.")
@@ -265,10 +336,17 @@ class Handler(BaseHTTPRequestHandler):
             if not (math.isfinite(start) and math.isfinite(end) and 0 <= start < end <= duration and end - start >= 0.099):
                 raise ValueError("Each clip must be at least 0.1 seconds and fit inside the source video.")
             clips.append((start, end))
+        captions = data.get("captions", [""] * len(clips))
+        if len(captions) != len(clips) or any(not isinstance(text, str) or len(text) > 240 for text in captions):
+            raise ValueError("Keep each on-screen caption to 240 characters.")
+        music = self.clipper.music[data["music"]] if data.get("music") else None
+        volume = float(data.get("volume", 0.25))
+        if not 0 <= volume <= 1:
+            raise ValueError("Music volume must be between 0% and 100%.")
         job_id = uuid4().hex
         with self.clipper.lock:
             self.clipper.jobs[job_id] = dict(status="queued", current=0, total=len(clips), files=[])
-        self.clipper.worker.submit(self.clipper.render, job_id, source, clips, resolution, framing)
+        self.clipper.worker.submit(self.clipper.render, job_id, source, clips, resolution, framing, captions, music, volume)
         self.reply({"id": job_id}, 202)
 
 
