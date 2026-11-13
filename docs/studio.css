@@ -89,3 +89,40 @@ footer { margin-top: 21px; }
   background: #262824; color: inherit; cursor: pointer;
 }
 .link-form p { font-size: 12px; }
+.style-preview {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 13px 17px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.style-preview canvas {
+  width: 72px;
+  height: 128px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101113;
+}
+.trim-fields button {
+  margin-top: 5px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #252724;
+  color: inherit;
+  cursor: pointer;
+}
+.timeline {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  margin-top: 13px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.timeline input {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 0;
+}

@@ -24,6 +24,10 @@
         </div>
         <video id="preview" controls playsinline hidden></video>
       </div>
+      <div id="stylePreview" class="style-preview" hidden>
+        <canvas id="styleFrame" width="360" height="640" aria-label="Vertical preview of the selected style"></canvas>
+        <span>Style preview</span>
+      </div>
       <div class="source-bar">
         <span id="filename">No video selected</span>
         <label class="browse"><input id="source" type="file" accept="video/*"><span>Browse video</span></label>
@@ -56,11 +60,16 @@
           <span><strong>Insta Edit</strong><small>Full frame over a dimmed background</small></span>
         </label>
       </fieldset>
-      <fieldset id="trim">
+      <fieldset id="trim" disabled>
         <legend>Trim range</legend>
         <div class="trim-fields">
-          <label>Start (seconds)<input id="start" type="number" min="0" step="any" value="0" required></label>
-          <label>End (seconds)<input id="end" type="number" min="0" step="any" required></label>
+          <label>Start (seconds)<input id="start" type="number" min="0" step="any" value="0" required><button id="markStart" type="button">Use playhead</button></label>
+          <label>End (seconds)<input id="end" type="number" min="0" step="any" required><button id="markEnd" type="button">Use playhead</button></label>
+        </div>
+        <div class="timeline">
+          <label for="playhead">Playhead</label>
+          <output id="clipLength"></output>
+          <input id="playhead" type="range" min="0" max="0" step="any" value="0">
         </div>
       </fieldset>
       <div class="export">
@@ -92,8 +101,79 @@ const supported = typeof MediaRecorder !== 'undefined' &&
   typeof HTMLCanvasElement.prototype.captureStream === 'function' &&
   typeof AudioContext !== 'undefined';
 
+function frameRenderer(canvas, preset) {
+  const frame = canvas.getContext('2d');
+  const horizontalScale = canvas.width / video.videoWidth;
+  const verticalScale = canvas.height / video.videoHeight;
+  const coverScale = Math.max(horizontalScale, verticalScale);
+  const fitScale = Math.min(horizontalScale, verticalScale);
+  function drawVideo(scale) {
+    const width = video.videoWidth * scale;
+    const height = video.videoHeight * scale;
+    frame.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+  }
+  function tint(color) {
+    frame.fillStyle = color;
+    frame.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  return function draw() {
+    if (preset === 'cold') {
+      frame.filter = 'contrast(1.24) saturate(0.6) brightness(0.86)';
+      drawVideo(coverScale);
+      frame.filter = 'none';
+      tint('rgba(18, 40, 71, 0.18)');
+    } else if (preset === 'insta') {
+      drawVideo(coverScale);
+      tint('rgba(0, 0, 0, 0.68)');
+      drawVideo(fitScale);
+    } else {
+      drawVideo(coverScale);
+    }
+  };
+}
+
+const playhead = element('playhead');
+const stylePreview = element('stylePreview');
+const styleFrame = element('styleFrame');
+const selectedPreset = () => editType.querySelector(':checked').value;
+let previewAnimation;
+function refreshFrame() {
+  if (!stylePreview.hidden && video.readyState >= 2) {
+    frameRenderer(styleFrame, selectedPreset())();
+  }
+}
+
+function refreshTrim() {
+  playhead.value = video.currentTime;
+  playhead.setAttribute('aria-valuetext', video.currentTime.toFixed(2) + ' seconds');
+  const length = end.valueAsNumber - start.valueAsNumber;
+  element('clipLength').textContent = length > 0 ? length.toFixed(2) + ' s clip' : '';
+}
+function animatePreview() {
+  refreshFrame();
+  if (!video.paused && !trim.disabled) previewAnimation = requestAnimationFrame(animatePreview);
+}
+video.addEventListener('play', () => {
+  cancelAnimationFrame(previewAnimation);
+  animatePreview();
+});
+for (const event of ['loadeddata', 'seeked', 'pause']) video.addEventListener(event, refreshFrame);
+video.addEventListener('timeupdate', refreshTrim);
+editType.addEventListener('change', refreshFrame);
+trim.addEventListener('input', event => {
+  if (event.target === playhead) video.currentTime = playhead.valueAsNumber;
+  refreshTrim();
+});
+for (const [id, field] of [['markStart', start], ['markEnd', end]]) {
+  element(id).onclick = () => {
+    field.value = video.currentTime;
+    refreshTrim();
+  };
+}
+
 function loadSource(url, name, remote) {
-  exportButton.disabled = true;
+  exportButton.disabled = trim.disabled = true;
+  stylePreview.hidden = true;
   video.hidden = true;
   element('empty').hidden = false;
   element('filename').textContent = name;
@@ -130,10 +210,13 @@ video.onloadedmetadata = () => {
   const valid = Number.isFinite(video.duration) && video.duration > 0 && video.videoWidth > 0;
   video.hidden = !valid;
   element('empty').hidden = valid;
-  start.max = end.max = valid ? video.duration : 0;
+  trim.disabled = stylePreview.hidden = !valid;
+  start.max = end.max = playhead.max = valid ? video.duration : 0;
   start.value = 0;
   end.value = valid ? Math.min(video.duration, 15) : '';
   exportButton.disabled = !valid || !supported;
+  refreshTrim();
+  refreshFrame();
   status.textContent = !supported ? 'Open this page in a browser that supports video recording.'
     : valid ? 'Set the range and export. Keep this tab visible during export.'
     : 'Choose a video with a known duration.';
@@ -153,7 +236,7 @@ element('clip').onsubmit = async event => {
     return;
   }
   if (!supported || exportButton.disabled) return;
-  const preset = editType.querySelector(':checked').value;
+  const preset = selectedPreset();
   source.disabled = sourceLink.disabled = loadLink.disabled = editType.disabled = trim.disabled = exportButton.disabled = true;
   video.controls = false;
   download.hidden = true;
@@ -161,7 +244,6 @@ element('clip').onsubmit = async event => {
   const canvas = document.createElement('canvas');
   canvas.width = 720;
   canvas.height = 1280;
-  const frame = canvas.getContext('2d');
   const stream = canvas.captureStream(30);
   let recorder, animation, audioOutput;
   try {
@@ -187,33 +269,7 @@ element('clip').onsubmit = async event => {
         video.currentTime = from;
       });
     }
-    const horizontalScale = canvas.width / video.videoWidth;
-    const verticalScale = canvas.height / video.videoHeight;
-    const coverScale = Math.max(horizontalScale, verticalScale);
-    const fitScale = Math.min(horizontalScale, verticalScale);
-    function drawVideo(scale) {
-      const width = video.videoWidth * scale;
-      const height = video.videoHeight * scale;
-      frame.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-    }
-    function tint(color) {
-      frame.fillStyle = color;
-      frame.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    function draw() {
-      if (preset === 'cold') {
-        frame.filter = 'contrast(1.24) saturate(0.6) brightness(0.86)';
-        drawVideo(coverScale);
-        frame.filter = 'none';
-        tint('rgba(18, 40, 71, 0.18)');
-      } else if (preset === 'insta') {
-        drawVideo(coverScale);
-        tint('rgba(0, 0, 0, 0.68)');
-        drawVideo(fitScale);
-      } else {
-        drawVideo(coverScale);
-      }
-    }
+    const draw = frameRenderer(canvas, preset);
     draw();
     const formats = ['video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'];
     const mimeType = formats.find(type => MediaRecorder.isTypeSupported(type));
