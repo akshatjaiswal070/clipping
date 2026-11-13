@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clipping</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui;background:#101114;color:#f2f2f4;accent-color:#b9fb75}
+body{max-width:720px;margin:44px auto;padding:0 20px}section{background:#1a1b20;border:1px solid #303137;border-radius:14px;padding:20px}h1{letter-spacing:-.06em;font-size:38px}a{color:#b9fb75}video{width:100%;max-height:380px;background:#09090a;margin:16px 0}label{display:inline-flex;flex-direction:column;gap:5px;margin:0 10px 12px 0}input,button{font:inherit}input[type=number]{width:110px;padding:6px}button{padding:9px 14px;border:0;border-radius:7px;background:#b9fb75;color:#17210d;font-weight:700}button:disabled{opacity:.45}p{line-height:1.5}
+</style>
+<h1>Clipping</h1>
+<section>
+  <label>Source video<input id="source" type="file" accept="video/*"></label>
+  <video id="preview" controls playsinline></video>
+  <form id="clip">
+    <label>Start (seconds)<input id="start" type="number" min="0" step="any" value="0" required></label>
+    <label>End (seconds)<input id="end" type="number" min="0" step="any" required></label>
+    <button id="export" disabled>Export vertical clip</button>
+  </form>
+  <p id="status" role="status">Choose a video to start.</p>
+  <a id="download" hidden>Download clip</a>
+</section>
+<p>For video URL import, captions, music, or social uploads, <a href="https://github.com/akshatjaiswal070/clipping#readme">run Clipping on your computer</a>.</p>
+<script>
+const element = id => document.getElementById(id);
+const video = element('preview');
+const source = element('source');
+const start = element('start');
+const end = element('end');
+const exportButton = element('export');
+const status = element('status');
+const download = element('download');
+let sourceUrl, outputUrl, audioContext, audioSource;
+const supported = typeof MediaRecorder !== 'undefined' &&
+  typeof HTMLCanvasElement.prototype.captureStream === 'function' &&
+  typeof AudioContext !== 'undefined';
+
+source.onchange = () => {
+  const file = source.files[0];
+  if (!file) return;
+  exportButton.disabled = true;
+  download.hidden = true;
+  if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+  video.src = sourceUrl = URL.createObjectURL(file);
+};
+video.onloadedmetadata = () => {
+  const valid = Number.isFinite(video.duration) && video.duration > 0 && video.videoWidth > 0;
+  start.max = end.max = valid ? video.duration : 0;
+  start.value = 0;
+  end.value = valid ? Math.min(video.duration, 15) : '';
+  exportButton.disabled = !valid || !supported;
+  status.textContent = !supported ? 'Open this page in a browser that supports video recording.'
+    : valid ? 'Set the range and export. Keep this tab visible during export.'
+    : 'Choose a video with a known duration.';
+};
+video.onerror = () => {
+  exportButton.disabled = true;
+  status.textContent = 'This video format could not be played.';
+};
+
+element('clip').onsubmit = async event => {
+  event.preventDefault();
+  const from = start.valueAsNumber, to = end.valueAsNumber;
+  if (!(from >= 0 && from < to && to <= video.duration)) {
+    status.textContent = 'Choose a start and end within the video.';
+    return;
+  }
+  source.disabled = exportButton.disabled = true;
+  video.controls = false;
+  download.hidden = true;
+  status.textContent = 'Exporting in real time…';
+  const canvas = document.createElement('canvas');
+  canvas.width = 720;
+  canvas.height = 1280;
+  const frame = canvas.getContext('2d');
+  const stream = canvas.captureStream(30);
+  let recorder, animation, audioOutput;
+  try {
+    if (!audioContext) {
+      audioContext = new AudioContext();
+      audioSource = audioContext.createMediaElementSource(video);
+      audioSource.connect(audioContext.destination);
+    }
+    await audioContext.resume();
+    audioOutput = audioContext.createMediaStreamDestination();
+    audioSource.connect(audioOutput);
+    for (const track of audioOutput.stream.getAudioTracks()) stream.addTrack(track);
+    video.pause();
+    video.playbackRate = 1;
+    if (video.currentTime !== from) {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          video.removeEventListener('seeked', seeked);
+          reject(new Error('Could not seek to the start of the clip.'));
+        }, 5000);
+        function seeked() { clearTimeout(timeout); resolve(); }
+        video.addEventListener('seeked', seeked, {once:true});
+        video.currentTime = from;
+      });
+    }
+    const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
+    const width = video.videoWidth * ratio, height = video.videoHeight * ratio;
+    const draw = () => frame.drawImage(video, (canvas.width-width)/2, (canvas.height-height)/2, width, height);
+    draw();
+    const formats = ['video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm'];
+    const mimeType = formats.find(type => MediaRecorder.isTypeSupported(type));
+    recorder = new MediaRecorder(stream, mimeType ? {mimeType} : {});
+    const chunks = [];
+    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+    await new Promise((resolve, reject) => {
+      recorder.onstop = resolve;
+      recorder.onerror = () => reject(new Error('Recording failed.'));
+      const tick = () => {
+        if (video.currentTime >= to || video.ended) {
+          video.pause();
+          recorder.stop();
+          return;
+        }
+        draw();
+        animation = requestAnimationFrame(tick);
+      };
+      video.play().then(() => {
+        try { recorder.start(); tick(); } catch (error) { reject(error); }
+      }, reject);
+    });
+    if (!chunks.length) throw new Error('No video was recorded. Try a longer range.');
+    if (outputUrl) URL.revokeObjectURL(outputUrl);
+    const type = recorder.mimeType || chunks[0].type;
+    outputUrl = URL.createObjectURL(new Blob(chunks, {type}));
+    download.href = outputUrl;
+    download.download = 'clip.' + (type.startsWith('video/mp4') ? 'mp4' : 'webm');
+    download.hidden = false;
+    status.textContent = 'Your clip is ready.';
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    cancelAnimationFrame(animation);
+    video.pause();
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    if (audioOutput) audioSource.disconnect(audioOutput);
+    for (const track of stream.getTracks()) track.stop();
+    video.controls = true;
+    source.disabled = exportButton.disabled = false;
+  }
+};
+</script>
+</html>

@@ -37,3 +37,7 @@ To enable direct uploads, supply credentials as environment variables before sta
 Use current tokens with permission to publish to the intended accounts. Restart Clipping after updating an expired token. You can also download the MP4 and use the YouTube Studio or Meta Business Suite links in the app.
 
 [YouTube upload setup](https://developers.google.com/youtube/data/guides/uploading_a_video) · [Instagram content publishing](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/content-publishing/)
+
+## Browser edition
+
+Use [Clipping on GitHub Pages](https://akshatjaiswal070.github.io/clipping/) to trim a local video and export a 720 × 1280 center crop in a supported browser. The browser records the clip in real time and downloads MP4 or WebM based on its recording support. The video stays on your device.
